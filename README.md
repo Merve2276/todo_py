@@ -26,3 +26,13 @@ Bu proje Python ve SQLite kullanılarak yapılmış basit bir komut satırı gö
    git clone https://github.com/KULLANICIADIN/todo-app.git
    cd todo-app
 
+## Grafik Arayüz (Tkinter)
+
+Linux Mint ve Debian türevlerinde bir kez kurmak için:
+```bash
+sudo apt update
+sudo apt install python3-tk
+ 
+![GUI Görseli](assets/GUI.png)
+![SQLite Görseli](assets/SQLite.png)
+
