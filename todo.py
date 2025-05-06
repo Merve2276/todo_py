@@ -1,98 +1,163 @@
 import sqlite3
-import argparse
+import os
+import tkinter as tk
+from tkinter import messagebox
 
-# Veritabanını oluştur
+DB_FILE = os.getenv("TODO_DB", "todo.db")
+
+# ------ Veritabanı Kurulum Fonksiyonu ------
 def init_db():
-    conn = sqlite3.connect("todo.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS tasks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        completed BOOLEAN NOT NULL DEFAULT 0
-    )
-    """)
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                completed BOOLEAN NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                completed_date DATETIME
+            )
+        """)
+        conn.commit()
+        conn.close()
+    except sqlite3.Error as e:
+        messagebox.showerror("Veritabanı Hatası", f"Veritabanı hatası: {e}")
+        exit(1)
 
-# Görev ekle
-def add_task(name):
-    conn = sqlite3.connect("todo.db")
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO tasks (name, completed) VALUES (?, ?)", (name, 0))
-    conn.commit()
-    conn.close()
-    print(f"Görev eklendi: {name}")
+# ------ Veritabanı İşlemleri ------
+def add_task_db(name):
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO tasks (name, completed) VALUES (?, 0)", (name,))
+        conn.commit()
+        conn.close()
+    except sqlite3.Error as e:
+        messagebox.showerror("Veritabanı Hatası", f"Görev eklerken hata oluştu: {e}")
 
-# Görevleri listele
-def list_tasks():
-    conn = sqlite3.connect("todo.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, name, completed FROM tasks")
-    tasks = cursor.fetchall()
-    conn.close()
+def get_tasks_db():
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, completed, created_at, completed_date FROM tasks ORDER BY created_at")
+        tasks = cursor.fetchall()
+        conn.close()
+        return tasks
+    except sqlite3.Error as e:
+        messagebox.showerror("Veritabanı Hatası", f"Veritabanı hatası: {e}")
+        return []
 
-    if tasks:
-        print("Görevler:")
-        for task in tasks:
-            status = "Tamamlandı" if task[2] else "Tamamlanmadı"
-            print(f"{task[0]}. {task[1]} - {status}")
+def complete_task_db(task_id):
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE tasks SET completed = 1, completed_date = CURRENT_TIMESTAMP WHERE id = ?", (task_id,))
+        conn.commit()
+        conn.close()
+    except sqlite3.Error as e:
+        messagebox.showerror("Veritabanı Hatası", f"Görev tamamlama hatası: {e}")
+
+def delete_task_db(task_id):
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        conn.commit()
+        conn.close()
+    except sqlite3.Error as e:
+        messagebox.showerror("Veritabanı Hatası", f"Görev silme hatası: {e}")
+
+# ------ GUI Bileşenleri ve Olaylar ------
+def refresh_list():
+    listbox.delete(0, tk.END)
+    tasks = get_tasks_db()
+    if not tasks:
+        messagebox.showinfo("Bilgi", "Görev bulunmamaktadır.")
+    for index, task in enumerate(tasks, start=1):
+        status = "✅" if task[2] else "❌"
+        created_at = task[3][:16]
+        completed_at = task[4][:16] if task[4] else "—"
+        listbox.insert(tk.END, f"{index}. {task[1]} {status} (Oluşturuldu: {created_at}, Tamamlandı: {completed_at}) (ID:{task[0]})")
+
+def on_add():
+    name = entry.get().strip()
+    if name:
+        add_task_db(name)
+        entry.delete(0, tk.END)
+        refresh_list()
     else:
-        print("Hiç görev bulunmamaktadır.")
+        messagebox.showwarning("Uyarı", "Lütfen görev adı girin.")
 
-# Görevi tamamla
-def complete_task(task_id):
-    conn = sqlite3.connect("todo.db")
-    cursor = conn.cursor()
-    cursor.execute("UPDATE tasks SET completed = 1 WHERE id = ?", (task_id,))
-    conn.commit()
-    conn.close()
-    print(f"Görev {task_id} tamamlandı.")
-
-# Menü (opsiyonel)
-def interactive_menu():
-    while True:
-        print("\n1. Görev Ekle")
-        print("2. Görev Listele")
-        print("3. Görev Tamamla")
-        print("4. Çık")
-        choice = input("Seçiminizi yapın: ")
-
-        if choice == "1":
-            task_name = input("Görev adı: ")
-            add_task(task_name)
-        elif choice == "2":
-            list_tasks()
-        elif choice == "3":
-            task_id = int(input("Görev numarası: "))
-            complete_task(task_id)
-        elif choice == "4":
-            break
-        else:
-            print("Geçersiz seçim!")
-
-# Ana fonksiyon (komut satırı desteği)
-def main():
-    init_db()
-
-    parser = argparse.ArgumentParser(description="Görev yönetim uygulaması")
-    parser.add_argument("command", nargs="?", help="Komut: add, list, complete")
-    parser.add_argument("value", nargs="?", help="Görev adı veya ID")
-
-    args = parser.parse_args()
-
-    if args.command == "add" and args.value:
-        add_task(args.value)
-    elif args.command == "list":
-        list_tasks()
-    elif args.command == "complete" and args.value:
-        try:
-            complete_task(int(args.value))
-        except ValueError:
-            print("Lütfen geçerli bir ID girin.")
+def on_complete():
+    sel = listbox.curselection()
+    if sel:
+        item = listbox.get(sel[0])
+        task_id = int(item.split("ID:")[1].rstrip(')'))
+        complete_task_db(task_id)
+        refresh_list()
     else:
-        interactive_menu()
+        messagebox.showwarning("Uyarı", "Tamamlanacak görevi seçin.")
 
-if __name__ == "__main__":
-    main()
+def on_delete():
+    sel = listbox.curselection()
+    if sel:
+        item = listbox.get(sel[0])
+        task_id = int(item.split("ID:")[1].rstrip(')'))
+        delete_task_db(task_id)
+        refresh_list()
+    else:
+        messagebox.showwarning("Uyarı", "Silinecek görevi seçin.")
+
+# ------ Uygulamayı Başlat ------
+init_db()
+root = tk.Tk()
+root.title("Görev Takip Uygulaması")
+root.geometry("700x500")
+
+# Giriş çerçevesi
+frame = tk.Frame(root)
+frame.pack(pady=10)
+
+entry = tk.Entry(frame, width=40)
+entry.pack(side=tk.LEFT, padx=(0, 10))
+
+add_btn = tk.Button(frame, text="Ekle", command=on_add)
+add_btn.pack(side=tk.LEFT)
+
+# Liste çerçevesi (scrollbar'lı)
+list_frame = tk.Frame(root)
+list_frame.pack(pady=10, fill=tk.BOTH, expand=True)
+
+scrollbar_y = tk.Scrollbar(list_frame, orient=tk.VERTICAL)
+scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
+
+scrollbar_x = tk.Scrollbar(root, orient=tk.HORIZONTAL)
+scrollbar_x.pack(side=tk.BOTTOM, fill=tk.X)
+
+listbox = tk.Listbox(
+    list_frame,
+    width=100,
+    height=15,
+    yscrollcommand=scrollbar_y.set,
+    xscrollcommand=scrollbar_x.set
+)
+listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+scrollbar_y.config(command=listbox.yview)
+scrollbar_x.config(command=listbox.xview)
+
+# Buton çerçevesi
+btn_frame = tk.Frame(root)
+btn_frame.pack(pady=10)
+
+complete_btn = tk.Button(btn_frame, text="Tamamla", command=on_complete)
+complete_btn.pack(side=tk.LEFT, padx=10)
+
+delete_btn = tk.Button(btn_frame, text="Sil", command=on_delete)
+delete_btn.pack(side=tk.LEFT, padx=10)
+
+# Listeyi yenile
+refresh_list()
+root.mainloop()
 
