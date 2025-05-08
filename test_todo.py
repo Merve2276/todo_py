@@ -1,78 +1,229 @@
 import sqlite3
-import todo  # Uygulamanızın ana dosyasını import edin
+import os
+import tkinter as tk
+from tkinter import messagebox
+from datetime import datetime, timezone, timedelta
 
-# Test veritabanı
-TEST_DB = "test_todo.db"
+DB_FILE = os.getenv("TODO_DB", "todo.db")
+current_user_id = None  # Global kullanıcı ID'si
 
-# Test öncesi veritabanı başlatma
-def init_test_db():
-    conn = sqlite3.connect(TEST_DB)
+# Kullanıcı tablosunu oluştur
+def create_users_table():
+    conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS tasks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        completed BOOLEAN NOT NULL DEFAULT 0
-    )
-    """)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password TEXT NOT NULL
+        )
+    ''')
     conn.commit()
     conn.close()
 
-# Görev ekleme testi
-def test_add_task():
-    init_test_db()  # Test veritabanını başlat
-    todo.add_task("Test Görevi")  # Görev ekle
-    conn = sqlite3.connect(TEST_DB)
+# Görev tablosunu oluştur
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("SELECT name, completed FROM tasks")
-    task = cursor.fetchone()  # Veritabanından görev al
-    conn.close()
-    print(f"Added task: {task}")  # Görev eklenip eklenmediğini kontrol et
-    assert task == ("Test Görevi", 0)  # Beklenen sonucu kontrol et
-
-# Görev silme testi
-def test_delete_task():
-    init_test_db()  # Test veritabanını başlat
-    todo.add_task("Silinecek Görev")  # Görev ekle
-    conn = sqlite3.connect(TEST_DB)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id FROM tasks WHERE name = 'Silinecek Görev'")
-    task = cursor.fetchone()  # Silinecek görevin ID'sini al
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            completed BOOLEAN NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL,
+            completed_date DATETIME,
+            user_id INTEGER,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+    ''')
+    conn.commit()
     conn.close()
 
-    task_id = task[0] if task else None
-    assert task_id is not None, "Görev bulunamadı"  # Görevin eklenip eklenmediğini kontrol et
-    print(f"Task ID for deletion: {task_id}")
+# Kullanıcı girişi
+def login_screen():
+    login_win = tk.Tk()
+    login_win.title("Giriş Yap")
+    login_win.geometry("300x200")
 
-    todo.delete_task(task_id)  # Görev sil
-    conn = sqlite3.connect(TEST_DB)
+    tk.Label(login_win, text="Kullanıcı Adı").pack()
+    username_entry = tk.Entry(login_win)
+    username_entry.pack()
+
+    tk.Label(login_win, text="Şifre").pack()
+    password_entry = tk.Entry(login_win, show="*")
+    password_entry.pack()
+
+    def login():
+        global current_user_id
+        username = username_entry.get()
+        password = password_entry.get()
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM users WHERE username=? AND password=?", (username, password))
+        result = cursor.fetchone()
+        conn.close()
+        if result:
+            current_user_id = result[0]
+            login_win.destroy()
+            start_app()
+        else:
+            messagebox.showerror("Hata", "Geçersiz kullanıcı adı veya şifre.")
+
+    def register():
+        username = username_entry.get()
+        password = password_entry.get()
+        if not username or not password:
+            messagebox.showwarning("Uyarı", "Boş alan bırakmayın.")
+            return
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
+            conn.commit()
+            messagebox.showinfo("Başarılı", "Kayıt oluşturuldu, şimdi giriş yapabilirsiniz.")
+        except sqlite3.IntegrityError:
+            messagebox.showerror("Hata", "Bu kullanıcı adı zaten mevcut.")
+        conn.close()
+
+    tk.Button(login_win, text="Giriş Yap", command=login).pack(pady=5)
+    tk.Button(login_win, text="Kayıt Ol", command=register).pack(pady=5)
+    login_win.mainloop()
+
+# Yeni görev ekleme (Türkiye saatiyle)
+def add_task_db(name):
+    turkiye_saati = datetime.now(timezone(timedelta(hours=3)))  # UTC+3
+    created_at = turkiye_saati.strftime('%Y-%m-%d %H:%M:%S')
+
+    conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM tasks WHERE id = ?", (task_id,))
-    deleted_task = cursor.fetchone()  # Silinmiş görevi kontrol et
+    cursor.execute(
+        "INSERT INTO tasks (name, completed, created_at, user_id) VALUES (?, 0, ?, ?)",
+        (name, created_at, current_user_id)
+    )
+    conn.commit()
     conn.close()
-    print(f"Deleted task: {deleted_task}")
-    assert deleted_task is None, "Görev silinemedi"  # Silinen görev bulunmamalı
 
-# Görev tamamlama testi
-def test_complete_task():
-    init_test_db()  # Test veritabanını başlat
-    todo.add_task("Tamamlama Testi Görevi")  # Görev ekle
-    conn = sqlite3.connect(TEST_DB)
+# Görevleri getir
+def get_tasks_db():
+    conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM tasks WHERE name = 'Tamamlama Testi Görevi'")
-    task = cursor.fetchone()  # Görevin ID'sini al
+    cursor.execute('''
+        SELECT id, name, completed, created_at, completed_date FROM tasks
+        WHERE user_id = ?
+        ORDER BY created_at
+    ''', (current_user_id,))
+    tasks = cursor.fetchall()
     conn.close()
+    return tasks
 
-    task_id = task[0] if task else None
-    assert task_id is not None, "Görev bulunamadı"  # Görev eklenmediği için test başarısız olabilir
-    print(f"Task ID for completion: {task_id}")
+# Görevi tamamla
+def complete_task_db(task_id):
+    turkiye_saati = datetime.now(timezone(timedelta(hours=3)))
+    completed_at = turkiye_saati.strftime('%Y-%m-%d %H:%M:%S')
 
-    todo.complete_task(task_id)  # Görevi tamamla
-    conn = sqlite3.connect(TEST_DB)
+    conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("SELECT completed FROM tasks WHERE id = ?", (task_id,))
-    completed = cursor.fetchone()[0]  # Görevin tamamlanma durumunu kontrol et
+    cursor.execute(
+        "UPDATE tasks SET completed = 1, completed_date = ? WHERE id = ? AND user_id = ?",
+        (completed_at, task_id, current_user_id)
+    )
+    conn.commit()
     conn.close()
-    print(f"Task completion status: {completed}")
-    assert completed == 1, "Görev tamamlanamadı"  # Tamamlanmış görev bekleniyor
+
+# Görevi sil
+def delete_task_db(task_id):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM tasks WHERE id = ? AND user_id = ?", (task_id, current_user_id))
+    conn.commit()
+    conn.close()
+
+# Listeyi yenile
+def refresh_list():
+    listbox.delete(0, tk.END)
+    tasks = get_tasks_db()
+    for index, task in enumerate(tasks, start=1):
+        status = "✅" if task[2] else "❌"
+        created_at = task[3][:16]
+        completed_at = task[4][:16] if task[4] else "—"
+        listbox.insert(tk.END, f"{index}. {task[1]} {status} (Oluşturuldu: {created_at}, Tamamlandı: {completed_at}) (ID:{task[0]})")
+
+def on_add():
+    name = entry.get().strip()
+    if name:
+        add_task_db(name)
+        entry.delete(0, tk.END)
+        refresh_list()
+    else:
+        messagebox.showwarning("Uyarı", "Lütfen görev adı girin.")
+
+def on_complete():
+    sel = listbox.curselection()
+    if sel:
+        item = listbox.get(sel[0])
+        task_id = int(item.split("ID:")[1].rstrip(')'))
+        complete_task_db(task_id)
+        refresh_list()
+    else:
+        messagebox.showwarning("Uyarı", "Tamamlanacak görevi seçin.")
+
+def on_delete():
+    sel = listbox.curselection()
+    if sel:
+        item = listbox.get(sel[0])
+        task_id = int(item.split("ID:")[1].rstrip(')'))
+        delete_task_db(task_id)
+        refresh_list()
+    else:
+        messagebox.showwarning("Uyarı", "Silinecek görevi seçin.")
+
+# Ana uygulama arayüzü
+def start_app():
+    global listbox, entry
+    root = tk.Tk()
+    root.title("Görev Takip Uygulaması")
+    root.geometry("700x500")
+
+    frame = tk.Frame(root)
+    frame.pack(pady=10)
+
+    entry = tk.Entry(frame, width=40)
+    entry.pack(side=tk.LEFT, padx=(0, 10))
+
+    tk.Button(frame, text="Ekle", command=on_add).pack(side=tk.LEFT)
+
+    list_frame = tk.Frame(root)
+    list_frame.pack(pady=10, fill=tk.BOTH, expand=True)
+
+    scrollbar_y = tk.Scrollbar(list_frame, orient=tk.VERTICAL)
+    scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
+
+    scrollbar_x = tk.Scrollbar(root, orient=tk.HORIZONTAL)
+    scrollbar_x.pack(side=tk.BOTTOM, fill=tk.X)
+
+    listbox = tk.Listbox(
+        list_frame,
+        width=100,
+        height=15,
+        yscrollcommand=scrollbar_y.set,
+        xscrollcommand=scrollbar_x.set
+    )
+    listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    scrollbar_y.config(command=listbox.yview)
+    scrollbar_x.config(command=listbox.xview)
+
+    btn_frame = tk.Frame(root)
+    btn_frame.pack(pady=10)
+
+    tk.Button(btn_frame, text="Tamamla", command=on_complete).pack(side=tk.LEFT, padx=10)
+    tk.Button(btn_frame, text="Sil", command=on_delete).pack(side=tk.LEFT, padx=10)
+
+    refresh_list()
+    root.mainloop()
+
+# Giriş ekranı başlat
+create_users_table()
+init_db()
+login_screen()
+
 
